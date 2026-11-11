@@ -6,8 +6,6 @@
 
 
 
-/* ------------------------------------------------------------------ Log */
-
 void Utilities::Log::Open(const std::wstring& path)
 {
 	if (lockReady == false)
@@ -16,7 +14,7 @@ void Utilities::Log::Open(const std::wstring& path)
 		lockReady = true;
 	}
 
-	/* _SH_DENYWR: лог можно открыть и прочитать, пока игра запущена */
+	/* _SH_DENYWR keeps the log readable by other programs while the game is running */
 	file = _wfsopen(path.c_str(), L"w", _SH_DENYWR);
 }
 
@@ -49,8 +47,6 @@ void Utilities::Log::Write(const char* format, ...)
 
 
 
-/* ------------------------------------------------------------------ Module */
-
 uintptr_t Utilities::Module::GetBase()
 {
 	return reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr));
@@ -74,7 +70,6 @@ std::wstring Utilities::Module::GetDirectory()
 
 std::wstring Utilities::Module::GetOwnDirectory()
 {
-	/* модуль, которому принадлежит этот код, — сам .asi */
 	HMODULE self = nullptr;
 	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 	                   reinterpret_cast<LPCWSTR>(&Utilities::Module::GetOwnDirectory), &self);
@@ -92,8 +87,6 @@ std::wstring Utilities::Module::GetOwnDirectory()
 
 
 
-
-/* ------------------------------------------------------------------ Memory */
 
 bool Utilities::Memory::SafeCopy(void* destination, const void* source, size_t size)
 {
@@ -130,8 +123,6 @@ bool Utilities::Memory::PatchPointer(uintptr_t address, void* newValue, void** o
 
 
 
-
-/* ------------------------------------------------------------------ Matrix4 */
 
 Utilities::Matrix4 Utilities::Matrix4::Multiply(const Matrix4& a, const Matrix4& b)
 {
@@ -197,8 +188,6 @@ bool Utilities::Matrix4::ReadFloat(const void* address, Matrix4& out)
 
 
 
-
-/* ------------------------------------------------------------------ ComputeState */
 
 void Utilities::ComputeState::Save(ID3D11DeviceContext* context)
 {

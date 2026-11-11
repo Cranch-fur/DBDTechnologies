@@ -8,7 +8,7 @@
 
 
 
-/* Шрифт 5x7: 7 строк по 5 бит, старший бит — левый пиксель */
+/* 5x7 font: 7 rows of 5 bits, the highest bit is the left pixel */
 struct Glyph
 {
 	char c;
@@ -74,11 +74,6 @@ void Overlay::SetStatus(State state, const char* newText)
 	statusState = state;
 	strncpy_s(statusText, newText ? newText : "", _TRUNCATE);
 	statusTick = GetTickCount64();
-}
-
-void Overlay::SetExtraTextProvider(ExtraTextProvider provider)
-{
-	extraTextProvider = provider;
 }
 
 bool Overlay::Initialize(ID3D11Device* device)
@@ -196,12 +191,11 @@ void Overlay::Rasterize(ID3D11DeviceContext* context, const char* newText)
 	textLength = count;
 }
 
-void Overlay::BuildText(char* buffer, size_t size, UINT screenWidth, State& colorState)
+void Overlay::BuildText(char* buffer, size_t size, State& colorState)
 {
-	(void)screenWidth;
 	State state = statusState;
 
-	/* Если апскейлер давно не встречался — 3D-сцены нет (загрузка, меню без мира) */
+	/* No temporal pass for a second means there is no 3D scene (loading screen, menu) */
 	if (GetTickCount64() - statusTick > 1000)
 		state = State::Idle;
 	colorState = state;
@@ -228,10 +222,7 @@ void Overlay::BuildText(char* buffer, size_t size, UINT screenWidth, State& colo
 	}
 }
 
-/*
-	Цвета надписи заданы как обычные sRGB-значения. В HDR их нужно перевести в пространство back buffer,
-	иначе "1.0" в PQ — это 10 000 нит (слепит), а в scRGB — 80 нит (тускло). Белый надписи ~200 нит.
-*/
+/* Colors are sRGB values; HDR back buffers need them converted, white is about 200 nits */
 void Overlay::EncodeColor(const float srgb[4], float out[4])
 {
 	const float paperWhiteNits = 200.0f;
@@ -251,7 +242,7 @@ void Overlay::EncodeColor(const float srgb[4], float out[4])
 	}
 	else if (hdrMode == HdrMode::PQ)
 	{
-		/* Rec.709 -> Rec.2020, затем ST.2084 */
+		/* Rec.709 to Rec.2020, then ST.2084 */
 		const float m[3][3] =
 		{
 			{ 0.6274f, 0.3293f, 0.0433f },
@@ -296,9 +287,9 @@ void Overlay::Draw(ID3D11DeviceContext* context, ID3D11Resource* backBuffer)
 
 	State colorState = State::Idle;
 	char newText[MaxChars + 1];
-	BuildText(newText, sizeof(newText), backBufferDesc.Width, colorState);
+	BuildText(newText, sizeof(newText), colorState);
 
-	/* Размер точки шрифта в пикселях экрана, целый (без размытия): 1080p -> 2, 1440p -> 3, 2160p -> 4 */
+	/* Integer font scale keeps the text sharp: 1080p = 2, 1440p = 3, 2160p = 4 */
 	UINT scale = (backBufferDesc.Height + 250) / 500;
 	if (scale < 1) scale = 1;
 	int length = static_cast<int>(strnlen(newText, MaxChars));
@@ -336,7 +327,7 @@ void Overlay::Draw(ID3D11DeviceContext* context, ID3D11Resource* backBuffer)
 	const float gray[4]  = { 0.65f, 0.65f, 0.65f, 1.0f };
 	const float* color = colorState == State::Active ? green : colorState == State::Disabled ? white : colorState == State::Error ? red : gray;
 	EncodeColor(color, c.textColor);
-	c.backgroundColor[3] = 0.6f;   // полупрозрачная чёрная подложка
+	c.backgroundColor[3] = 0.6f;   // Black background, 60% opacity
 	memcpy(mapped.pData, &c, sizeof(c));
 	context->Unmap(constants, 0);
 

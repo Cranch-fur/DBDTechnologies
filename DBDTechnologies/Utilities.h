@@ -29,7 +29,6 @@ namespace Utilities
 
 
 	public:
-		/* Пишет в консоль ("[DBDTechnologies] ...", как остальные моды) и в DBDTechnologies.log рядом с exe */
 		static void Open(const std::wstring& path);
 		static void Write(const char* format, ...);
 	};
@@ -39,15 +38,15 @@ namespace Utilities
 	{
 	public:
 		static uintptr_t GetBase();
-		static std::wstring GetDirectory();      // папка exe (Binaries\Win64)
-		static std::wstring GetOwnDirectory();   // папка, где лежит сам .asi
+		static std::wstring GetDirectory();      // Folder of the game executable
+		static std::wstring GetOwnDirectory();   // Folder of this module (.dll or .asi)
 	};
 
 
 	class Memory
 	{
 	public:
-		/* Копирование с защитой от исключений (нечитаемый адрес -> false) */
+		/* Returns false instead of crashing when the source address is not readable */
 		static bool SafeCopy(void* destination, const void* source, size_t size);
 
 		template <class T>
@@ -64,7 +63,7 @@ namespace Utilities
 	};
 
 
-	/* Матрица 4x4 в double. UE: векторы-строки, clip = pos * M */
+	/* Row-vector convention like Unreal Engine: clip = position * M */
 	struct Matrix4
 	{
 		double m[16] = {};
@@ -75,7 +74,7 @@ namespace Utilities
 	};
 
 
-	/* Сохранение/восстановление compute-стадии D3D11, чтобы кэш состояний UE ничего не заметил */
+	/* Saves and restores the compute stage so the engine's D3D11 state cache stays valid */
 	class ComputeState
 	{
 	public:

@@ -1,4 +1,4 @@
-#include "DLSS.h"
+#include "Technologies.h"
 
 
 
@@ -7,7 +7,7 @@
 
 DWORD WINAPI InitThread(LPVOID lpParam)
 {
-    DLSS::Init();
+    Technologies::Init();
     return 0;
 }
 

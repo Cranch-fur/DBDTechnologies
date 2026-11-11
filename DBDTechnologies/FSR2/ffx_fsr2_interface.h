@@ -1,9 +1,7 @@
-// ffx_fsr2_interface.h for DBDTechnologies.
-//
-// The FSR 2.2.1 sources in SDKs\FSR2 (AMD, MIT license) include this header, but the folder copied from
-// src\ffx-fsr2-api did not contain it (nor ffx_assert.h). This is a compatible replacement written for the
-// mod: it declares exactly what ffx_fsr2.cpp uses (pass list, message callback, backend callback table).
-// If the official file is ever placed next to ffx_fsr2.h, that one is used instead (same layout).
+/*
+	Replacement for ffx_fsr2_interface.h, which is not part of the src\ffx-fsr2-api copy in SDKs\FSR2.
+	Declares what ffx_fsr2.cpp uses. An official copy placed next to ffx_fsr2.h takes priority.
+*/
 
 #pragma once
 
@@ -20,7 +18,7 @@
 #ifndef FFX_ASSERT_MESSAGE
 #define FFX_ASSERT_MESSAGE(x, message) assert((x) && (message))
 #endif
-/* lock status channels (same values as shaders/ffx_fsr2_common.h), used by ffx_fsr2.cpp on the CPU */
+/* Same values as shaders/ffx_fsr2_common.h, which ffx_fsr2.cpp does not include */
 #ifndef LOCK_LIFETIME_REMAINING
 #define LOCK_LIFETIME_REMAINING 0
 #endif
@@ -38,7 +36,6 @@ extern "C" {
 
 FFX_FORWARD_DECLARE(FfxFsr2Interface);
 
-/// The passes FSR 2 schedules (one pipeline each).
 typedef enum FfxFsr2Pass {
     FFX_FSR2_PASS_DEPTH_CLIP = 0,
     FFX_FSR2_PASS_RECONSTRUCT_PREVIOUS_DEPTH = 1,
@@ -74,7 +71,7 @@ typedef FfxErrorCode (*FfxFsr2DestroyPipelineFunc)(FfxFsr2Interface* backendInte
 typedef FfxErrorCode (*FfxFsr2ScheduleGpuJobFunc)(FfxFsr2Interface* backendInterface, const FfxGpuJobDescription* job);
 typedef FfxErrorCode (*FfxFsr2ExecuteGpuJobsFunc)(FfxFsr2Interface* backendInterface, FfxCommandList commandList);
 
-/// Backend callback table (implemented by DBDTechnologies for Direct3D 11 in FSR2.cpp).
+/* Implemented for Direct3D 11 in FSR2.cpp */
 typedef struct FfxFsr2Interface {
     FfxFsr2CreateBackendContextFunc     fpCreateBackendContext;
     FfxFsr2GetDeviceCapabilitiesFunc    fpGetDeviceCapabilities;

@@ -11,7 +11,7 @@
 
 
 
-/* Функции берём через GetProcAddress, поэтому libxess_dx11.lib не нужен, а отсутствие DLL не мешает запуску игры */
+/* Resolved with GetProcAddress, so libxess_dx11.lib is not linked and a missing DLL does not stop the game */
 using GetVersion_t = decltype(&xessGetVersion);
 using CreateContext_t = decltype(&xessD3D11CreateContext);
 using Init_t = decltype(&xessD3D11Init);
@@ -41,7 +41,7 @@ struct QualityInfo
 	const char* name;
 };
 
-/* по убыванию входного разрешения */
+/* Ordered by decreasing input resolution */
 static const QualityInfo qualities[] =
 {
 	{ XESS_QUALITY_SETTING_AA, "NATIVE AA" },
@@ -120,7 +120,7 @@ bool XeSS::LoadLibraryAndFunctions()
 	}
 	if (library == nullptr)
 	{
-		Utilities::Log::Write("XeSS: libxess_dx11.dll not found. Put it next to DBDTechnologies.asi (%ls)",
+		Utilities::Log::Write("XeSS: libxess_dx11.dll not found. Put it next to the DBDTechnologies module (%ls)",
 		                      Utilities::Module::GetOwnDirectory().c_str());
 		errorReason = "LIBXESS_DX11.DLL NOT FOUND";
 		return false;
@@ -206,7 +206,7 @@ bool XeSS::Initialize(ID3D11Device* d3dDevice)
 
 
 
-/* Качество, в диапазон которого попадает текущее входное разрешение (ближе всего к "оптимальному") */
+/* Quality whose input range contains the current input, closest to its optimal resolution */
 int XeSS::ChooseQuality(int renderWidth, int renderHeight, int outputWidth, int outputHeight, int range[4])
 {
 	xess_2d_t output = { static_cast<uint32_t>(outputWidth), static_cast<uint32_t>(outputHeight) };
@@ -239,10 +239,7 @@ int XeSS::ChooseQuality(int renderWidth, int renderHeight, int outputWidth, int 
 
 bool XeSS::EnsureInitialized(int renderWidth, int renderHeight, int outputWidth, int outputHeight)
 {
-	/*
-		Динамическое разрешение: пока вход остаётся в диапазоне текущего качества, ничего не пересоздаём
-		(xessD3D11Init блокирующий и сбрасывает историю).
-	*/
+	/* Keeps the current quality while the input stays in its range: xessD3D11Init blocks and resets the history */
 	if (initQuality >= 0 && initOutputWidth == outputWidth && initOutputHeight == outputHeight &&
 	    renderWidth >= initMinWidth && renderWidth <= initMaxWidth && renderHeight >= initMinHeight && renderHeight <= initMaxHeight)
 		return true;
@@ -262,22 +259,18 @@ bool XeSS::EnsureInitialized(int renderWidth, int renderHeight, int outputWidth,
 	if (initQuality == quality && initOutputWidth == outputWidth && initOutputHeight == outputHeight)
 		return true;
 
-	/* не повторять каждый кадр неудавшуюся инициализацию */
 	const int key[3] = { outputWidth, outputHeight, quality };
 	if (memcmp(key, failedKey, sizeof(key)) == 0)
 		return false;
 
-	/*
-		Флаги: глубина обратная (reversed Z в UE), автоэкспозиция, цвет — HDR (по умолчанию),
-		векторы движения во входном разрешении (по умолчанию), в пикселях, без jitter.
-	*/
+	/* Color is HDR and motion vectors are at render resolution by default */
 	xess_d3d11_init_params_t params = {};
 	params.outputResolution.x = static_cast<uint32_t>(outputWidth);
 	params.outputResolution.y = static_cast<uint32_t>(outputHeight);
 	params.qualitySetting = qualities[quality].value;
 	params.initFlags = XESS_INIT_FLAG_INVERTED_DEPTH | XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE;
 
-	/* "перед повторной инициализацией работа GPU должна быть завершена" */
+	/* Intel requires pending GPU work to be finished before re-initialization */
 	ID3D11DeviceContext* immediate = nullptr;
 	device->GetImmediateContext(&immediate);
 	if (immediate)
@@ -318,8 +311,18 @@ bool XeSS::EnsureInitialized(int renderWidth, int renderHeight, int outputWidth,
 	return true;
 }
 
-bool XeSS::Execute(const Inputs& in)
+bool XeSS::Execute(ID3D11DeviceContext* d3dContext, const UpscalerInputs& in)
 {
+	if (initTried == false)
+	{
+		ID3D11Device* d3dDevice = nullptr;
+		d3dContext->GetDevice(&d3dDevice);
+		if (d3dDevice)
+		{
+			Initialize(d3dDevice);
+			d3dDevice->Release();
+		}
+	}
 	if (ready == false || context == nullptr)
 		return false;
 	if (in.color == nullptr || in.motionVectors == nullptr || in.depth == nullptr || in.output == nullptr)

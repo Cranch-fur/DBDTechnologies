@@ -6,42 +6,26 @@
 
 
 
-/*
-	Надпись-индикатор в левом верхнем углу.
-	Рисуется в самом конце кадра прямо в back buffer (поверх 3D, постобработки и интерфейса игры),
-	поэтому её размер считается от разрешения экрана и не зависит от r.ScreenPercentage.
-*/
+/* Status line in the top-left corner, drawn into the back buffer right before Present */
 class Overlay
 {
 public:
 	enum class State
 	{
-		Idle,      // в этом кадре апскейлер не встречался (меню без 3D-сцены)
-		Active,    // апскейлер мода отработал
-		Disabled,  // r.Upscaler.Method 0 — обычный TAA
-		Error      // апскейлер мода не запустился — работает то, что было в игре
+		Idle,       // No 3D scene this frame
+		Active,     // An upscaler of the mod is running
+		Disabled,   // Engine TAA/TAAU
+		Error       // The mod upscaler failed, the engine one is used
 	};
 
-	static constexpr int MaxChars = 96;
-
-	/* Как кодирован back buffer: обычный SDR, HDR10 (PQ, ST.2084) или scRGB (линейный FP16, 1.0 = 80 нит) */
 	enum class HdrMode
 	{
 		SDR,
-		PQ,
-		scRGB
+		PQ,       // HDR10, ST.2084
+		scRGB     // Linear FP16, 1.0 = 80 nits
 	};
-	static void SetHdrMode(HdrMode mode) { hdrMode = mode; }
 
-	/* Состояние и готовый текст строки (поток RHI) */
-	static void SetStatus(State state, const char* text);
-
-	/* Вызывается перед выводом кадра на экран (поток RHI) */
-	static void Draw(ID3D11DeviceContext* context, ID3D11Resource* backBuffer);
-
-	/* Дополнительный текст в конце строки (например, состояние Reflex) */
-	using ExtraTextProvider = const char* (*)();
-	static void SetExtraTextProvider(ExtraTextProvider provider);
+	static constexpr int MaxChars = 96;
 
 
 private:
@@ -60,7 +44,7 @@ private:
 	static inline State statusState = State::Idle;
 	static inline char statusText[MaxChars + 1] = {};
 	static inline ULONGLONG statusTick = 0;
-	static inline ExtraTextProvider extraTextProvider = nullptr;
+	static inline const char* (*extraTextProvider)() = nullptr;
 	static inline HdrMode hdrMode = HdrMode::SDR;
 
 	static inline bool initTried = false;
@@ -70,7 +54,7 @@ private:
 	static inline ID3D11Texture2D* mask = nullptr;
 	static inline ID3D11ShaderResourceView* maskSrv = nullptr;
 
-	/* Копия области back buffer под надписью: src (чтение) -> шейдер -> dst (запись) -> back buffer */
+	/* The back buffer has no UAV support: copy the area out, blend in a shader, copy it back */
 	static inline ID3D11Texture2D* source = nullptr;
 	static inline ID3D11ShaderResourceView* sourceSrv = nullptr;
 	static inline ID3D11Texture2D* destination = nullptr;
@@ -86,6 +70,16 @@ private:
 	static bool Initialize(ID3D11Device* device);
 	static bool EnsureArea(ID3D11Device* device, UINT width, UINT height, DXGI_FORMAT format);
 	static void Rasterize(ID3D11DeviceContext* context, const char* newText);
-	static void BuildText(char* buffer, size_t size, UINT screenWidth, State& colorState);
+	static void BuildText(char* buffer, size_t size, State& colorState);
 	static void EncodeColor(const float srgb[4], float out[4]);
+
+
+public:
+	static void SetStatus(State state, const char* text);
+	static void SetHdrMode(HdrMode mode) { hdrMode = mode; }
+
+	/* Text appended to the status line, e.g. the low latency state */
+	static void SetExtraTextProvider(const char* (*provider)()) { extraTextProvider = provider; }
+
+	static void Draw(ID3D11DeviceContext* context, ID3D11Resource* backBuffer);
 };

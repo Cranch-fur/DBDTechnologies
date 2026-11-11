@@ -71,14 +71,14 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>..\SDKs\DLSS\include;..\SDKs\NVAPI;..\SDKs\FSR1;..\SDKs\XeSS\inc;FSR2;..\SDKs\FSR2;$(IntDir);$(IncludePath)</IncludePath>
+    <IncludePath>..\SDKs\DLSS\include;..\SDKs\NVAPI;..\SDKs\AntiLag2-SDK;..\SDKs\FSR1;..\SDKs\XeSS\inc;FSR2;..\SDKs\FSR2;FSR3;$(IntDir);$(IncludePath)</IncludePath>
     <LibraryPath>..\SDKs\DLSS\lib\Windows_x86_64\x64;..\SDKs\NVAPI\amd64;$(LibraryPath)</LibraryPath>
-    <TargetExt>.asi</TargetExt>
+    <TargetExt>.dll</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>..\SDKs\DLSS\include;..\SDKs\NVAPI;..\SDKs\FSR1;..\SDKs\XeSS\inc;FSR2;..\SDKs\FSR2;$(IntDir);$(IncludePath)</IncludePath>
+    <IncludePath>..\SDKs\DLSS\include;..\SDKs\NVAPI;..\SDKs\AntiLag2-SDK;..\SDKs\FSR1;..\SDKs\XeSS\inc;FSR2;..\SDKs\FSR2;FSR3;$(IntDir);$(IncludePath)</IncludePath>
     <LibraryPath>..\SDKs\DLSS\lib\Windows_x86_64\x64;..\SDKs\NVAPI\amd64;$(LibraryPath)</LibraryPath>
-    <TargetExt>.asi</TargetExt>
+    <TargetExt>.dll</TargetExt>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -143,29 +143,64 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="Technologies.cpp" />
+    <ClCompile Include="Console.cpp" />
+    <ClCompile Include="DynamicResolution.cpp" />
+    <ClCompile Include="MotionVectors.cpp" />
     <ClCompile Include="DLSS.cpp" />
+    <ClCompile Include="XeSS.cpp" />
+    <ClCompile Include="FSR1.cpp" />
     <ClCompile Include="FSR2.cpp" />
+    <ClCompile Include="FSR3.cpp" />
+    <ClCompile Include="LowLatency.cpp" />
+    <ClCompile Include="Overlay.cpp" />
+    <ClCompile Include="Utilities.cpp" />
     <ClCompile Include="..\SDKs\FSR2\ffx_fsr2.cpp">
       <WarningLevel>Level1</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <ConformanceMode>false</ConformanceMode>
     </ClCompile>
-    <ClCompile Include="FSR.cpp" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="Overlay.cpp" />
-    <ClCompile Include="Reflex.cpp" />
-    <ClCompile Include="Utilities.cpp" />
-    <ClCompile Include="XeSS.cpp" />
+    <ClCompile Include="..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\ffx_fsr3upscaler.cpp">
+      <WarningLevel>Level1</WarningLevel>
+      <ForcedIncludeFiles>ffx_provider_external.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\SDKs\FidelityFX-SDK\Kits\FidelityFX\api\internal\ffx_object_management.cpp">
+      <WarningLevel>Level1</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\SDKs\FidelityFX-SDK\Kits\FidelityFX\api\internal\ffx_assert.cpp">
+      <WarningLevel>Level1</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+    </ClCompile>
+    <ClCompile Include="..\SDKs\FidelityFX-SDK\Kits\FidelityFX\api\internal\ffx_message.cpp">
+      <WarningLevel>Level1</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Technologies.h" />
+    <ClInclude Include="Console.h" />
+    <ClInclude Include="DynamicResolution.h" />
+    <ClInclude Include="MotionVectors.h" />
+    <ClInclude Include="UpscalerInputs.h" />
     <ClInclude Include="DLSS.h" />
-    <ClInclude Include="FSR.h" />
+    <ClInclude Include="XeSS.h" />
+    <ClInclude Include="FSR1.h" />
     <ClInclude Include="FSR2.h" />
     <ClInclude Include="FSR2\ffx_fsr2_interface.h" />
+    <ClInclude Include="FSR3.h" />
+    <ClInclude Include="FSR3\git_hash_branch.h" />
+    <ClInclude Include="FSR3\ffx_provider_external.h" />
+    <ClInclude Include="LowLatency.h" />
     <ClInclude Include="Overlay.h" />
-    <ClInclude Include="Reflex.h" />
     <ClInclude Include="Utilities.h" />
-    <ClInclude Include="XeSS.h" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Shaders\FsrEasu.hlsl">
@@ -249,7 +284,90 @@
       <ObjectFileOutput />
       <AdditionalIncludeDirectories>..\SDKs\FSR2\shaders;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </FxCompile>
+    <FxCompile Include="Shaders\Fsr3PrepareInputs.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3PrepareInputs</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3LumaPyramid.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3LumaPyramid</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3ShadingChangePyramid.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3ShadingChangePyramid</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3ShadingChange.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3ShadingChange</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3PrepareReactivity.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3PrepareReactivity</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3LumaInstability.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3LumaInstability</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3Accumulate.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3Accumulate</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3AccumulateSharpen.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3AccumulateSharpen</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
+    <FxCompile Include="Shaders\Fsr3Rcas.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>CS</EntryPointName>
+      <VariableName>g_Fsr3Rcas</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+      <AdditionalIncludeDirectories>Shaders\FSR3;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\internal\shaders;..\SDKs\FidelityFX-SDK\Kits\FidelityFX\upscalers\fsr3\include\gpu;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </FxCompile>
     <None Include="Shaders\Fsr2Options.hlsli" />
+    <None Include="Shaders\Fsr3Options.hlsli" />
+    <None Include="Shaders\FSR3\fsr3upscaler\ffx_fsr3upscaler_accumulate.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

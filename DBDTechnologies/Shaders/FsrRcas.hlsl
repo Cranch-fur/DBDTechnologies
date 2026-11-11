@@ -1,6 +1,4 @@
-// FSR 1 RCAS (Robust Contrast Adaptive Sharpening) — AMD FidelityFX FSR 1, MIT.
-// Used as the sharpening pass for every upscaler (r.Upscaler.Sharpness).
-// Compiled by Visual Studio (FxCompile) into a header with bytecode g_FsrRcas.
+/* AMD FSR 1 RCAS, also used as the sharpening pass of every upscaler */
 
 #define A_GPU 1
 #define A_HLSL 1
@@ -9,15 +7,14 @@
 cbuffer Constants : register(b0)
 {
     uint4 Const0;
-    uint4 Params;      // x = HDR (reversible tonemap), y = passthrough (no sharpening), z = encode to sRGB,
-                       // w = input was compressed per channel by EASU (scRGB): undo at the end
+    uint4 Params;      // x = HDR input, y = passthrough, z = encode sRGB, w = undo the EASU HDR curve
     uint4 OutputSize;  // xy = size
 };
 
 Texture2D<float4>   InputTexture  : register(t0);
 RWTexture2D<float4> OutputTexture : register(u0);
 
-// RCAS expects 0..1 values; HDR scene colour goes through a reversible curve
+/* RCAS expects 0..1, HDR scene color goes through a reversible curve */
 float3 Compress(float3 c)   { return c / (1.0 + max(max(c.r, c.g), c.b)); }
 float3 Decompress(float3 c) { return c / max(1.0 - max(max(c.r, c.g), c.b), 1.0 / 65504.0); }
 
