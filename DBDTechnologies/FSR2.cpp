@@ -1,0 +1,693 @@
+#include "FSR2.h"
+#include <d3dcompiler.h>
+#include <d3d11shader.h>
+#include <cfloat>
+#include <vector>
+
+#include "ffx_fsr2.h"
+
+/* шейдеры FSR 2, собранные Visual Studio (FxCompile) из Shaders\Fsr2*.hlsl */
+#include "Shaders/Fsr2DepthClip.h"
+#include "Shaders/Fsr2ReconstructPreviousDepth.h"
+#include "Shaders/Fsr2Lock.h"
+#include "Shaders/Fsr2Accumulate.h"
+#include "Shaders/Fsr2AccumulateSharpen.h"
+#include "Shaders/Fsr2Rcas.h"
+#include "Shaders/Fsr2LuminancePyramid.h"
+
+#pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "dxguid.lib")
+
+
+
+
+
+
+/* ================================================================== бэкенд D3D11 для ffx_fsr2.cpp */
+
+namespace
+{
+	constexpr int MaxResources = 512;
+	constexpr int FirstDynamicResource = 384;   // [1..384) — ресурсы FSR 2, [384..512) — ресурсы игры на один кадр
+	constexpr int MaxMips = 16;
+
+	struct BackendResource
+	{
+		ID3D11Resource* resource = nullptr;
+		ID3D11ShaderResourceView* srv = nullptr;
+		ID3D11UnorderedAccessView* uav[MaxMips] = {};
+		FfxResourceDescription description = {};
+		bool external = false;
+
+		void Release()
+		{
+			Utilities::SafeRelease(srv);
+			for (ID3D11UnorderedAccessView*& view : uav)
+				Utilities::SafeRelease(view);
+			Utilities::SafeRelease(resource);   /* внешним ресурсам мы тоже делали AddRef */
+			description = {};
+			external = false;
+		}
+	};
+
+	struct Backend
+	{
+		ID3D11Device* device = nullptr;
+		BackendResource resources[MaxResources];
+		int nextStatic = 1;                  // 0 = FFX_FSR2_RESOURCE_IDENTIFIER_NULL
+		int nextDynamic = FirstDynamicResource;
+		std::vector<FfxGpuJobDescription> jobs;
+		ID3D11Buffer* constantBuffers[2] = {};
+		ID3D11SamplerState* pointClamp = nullptr;
+		ID3D11SamplerState* linearClamp = nullptr;
+		Utilities::ComputeState savedState;
+	};
+
+	Backend* backend = nullptr;
+
+	DXGI_FORMAT ToDxgi(FfxSurfaceFormat format)
+	{
+		switch (format)
+		{
+		case FFX_SURFACE_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+		case FFX_SURFACE_FORMAT_R32G32B32A32_FLOAT: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+		case FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+		case FFX_SURFACE_FORMAT_R16G16B16A16_UNORM: return DXGI_FORMAT_R16G16B16A16_UNORM;
+		case FFX_SURFACE_FORMAT_R32G32_FLOAT: return DXGI_FORMAT_R32G32_FLOAT;
+		case FFX_SURFACE_FORMAT_R32_UINT: return DXGI_FORMAT_R32_UINT;
+		case FFX_SURFACE_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+		case FFX_SURFACE_FORMAT_R8G8B8A8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM;
+		case FFX_SURFACE_FORMAT_R11G11B10_FLOAT: return DXGI_FORMAT_R11G11B10_FLOAT;
+		case FFX_SURFACE_FORMAT_R16G16_FLOAT: return DXGI_FORMAT_R16G16_FLOAT;
+		case FFX_SURFACE_FORMAT_R16G16_UINT: return DXGI_FORMAT_R16G16_UINT;
+		case FFX_SURFACE_FORMAT_R16_FLOAT: return DXGI_FORMAT_R16_FLOAT;
+		case FFX_SURFACE_FORMAT_R16_UINT: return DXGI_FORMAT_R16_UINT;
+		case FFX_SURFACE_FORMAT_R16_UNORM: return DXGI_FORMAT_R16_UNORM;
+		case FFX_SURFACE_FORMAT_R16_SNORM: return DXGI_FORMAT_R16_SNORM;
+		case FFX_SURFACE_FORMAT_R8_UNORM: return DXGI_FORMAT_R8_UNORM;
+		case FFX_SURFACE_FORMAT_R8_UINT: return DXGI_FORMAT_R8_UINT;
+		case FFX_SURFACE_FORMAT_R8G8_UNORM: return DXGI_FORMAT_R8G8_UNORM;
+		case FFX_SURFACE_FORMAT_R32_FLOAT: return DXGI_FORMAT_R32_FLOAT;
+		default: return DXGI_FORMAT_UNKNOWN;
+		}
+	}
+
+	UINT BytesPerPixel(DXGI_FORMAT format)
+	{
+		switch (format)
+		{
+		case DXGI_FORMAT_R32G32B32A32_FLOAT: return 16;
+		case DXGI_FORMAT_R16G16B16A16_FLOAT:
+		case DXGI_FORMAT_R16G16B16A16_UNORM:
+		case DXGI_FORMAT_R32G32_FLOAT: return 8;
+		case DXGI_FORMAT_R32_UINT:
+		case DXGI_FORMAT_R8G8B8A8_UNORM:
+		case DXGI_FORMAT_R11G11B10_FLOAT:
+		case DXGI_FORMAT_R16G16_FLOAT:
+		case DXGI_FORMAT_R16G16_UINT:
+		case DXGI_FORMAT_R32_FLOAT: return 4;
+		case DXGI_FORMAT_R16_FLOAT:
+		case DXGI_FORMAT_R16_UINT:
+		case DXGI_FORMAT_R16_UNORM:
+		case DXGI_FORMAT_R16_SNORM:
+		case DXGI_FORMAT_R8G8_UNORM: return 2;
+		default: return 1;
+		}
+	}
+
+	/* Формат представления для текстур игры (часто TYPELESS) */
+	DXGI_FORMAT TypedFormat(DXGI_FORMAT format)
+	{
+		switch (format)
+		{
+		case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+		case DXGI_FORMAT_R32G32B32A32_TYPELESS: return DXGI_FORMAT_R32G32B32A32_FLOAT;
+		case DXGI_FORMAT_R32G32_TYPELESS: return DXGI_FORMAT_R32G32_FLOAT;
+		case DXGI_FORMAT_R16G16_TYPELESS: return DXGI_FORMAT_R16G16_FLOAT;
+		case DXGI_FORMAT_R32_TYPELESS: return DXGI_FORMAT_R32_FLOAT;
+		case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_UNORM;
+		case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+		case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
+		case DXGI_FORMAT_R16_TYPELESS: return DXGI_FORMAT_R16_FLOAT;
+		case DXGI_FORMAT_R8_TYPELESS: return DXGI_FORMAT_R8_UNORM;
+		case DXGI_FORMAT_R24G8_TYPELESS: return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		case DXGI_FORMAT_R32G8X24_TYPELESS: return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+		case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+		default: return format;
+		}
+	}
+
+	BackendResource* Get(FfxResourceInternal handle)
+	{
+		if (backend == nullptr || handle.internalIndex <= 0 || handle.internalIndex >= MaxResources)
+			return nullptr;
+		BackendResource* r = &backend->resources[handle.internalIndex];
+		return r->resource ? r : nullptr;
+	}
+
+	void LogMessage(FfxFsr2MsgType type, const wchar_t* message)
+	{
+		static int count = 0;
+		if (message && count++ < 50)
+			Utilities::Log::Write("FSR 2 %s: %ls", type == FFX_FSR2_MESSAGE_TYPE_ERROR ? "error" : "warning", message);
+	}
+
+	/* ---------------------------------------------------------------- callbacks */
+
+	FfxErrorCode CreateBackendContext(FfxFsr2Interface*, FfxDevice device)
+	{
+		if (backend == nullptr)
+			backend = new Backend();
+		backend->device = static_cast<ID3D11Device*>(device);
+
+		D3D11_BUFFER_DESC bufferDesc = {};
+		bufferDesc.ByteWidth = 256;   // FFX_MAX_CONST_SIZE (64) * 4
+		bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+		bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		for (ID3D11Buffer*& buffer : backend->constantBuffers)
+			if (buffer == nullptr && FAILED(backend->device->CreateBuffer(&bufferDesc, nullptr, &buffer)))
+				return FFX_ERROR_BACKEND_API_ERROR;
+
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		if (backend->pointClamp == nullptr && FAILED(backend->device->CreateSamplerState(&samplerDesc, &backend->pointClamp)))
+			return FFX_ERROR_BACKEND_API_ERROR;
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		if (backend->linearClamp == nullptr && FAILED(backend->device->CreateSamplerState(&samplerDesc, &backend->linearClamp)))
+			return FFX_ERROR_BACKEND_API_ERROR;
+		return FFX_OK;
+	}
+
+	FfxErrorCode GetDeviceCapabilities(FfxFsr2Interface*, FfxDeviceCapabilities* capabilities, FfxDevice)
+	{
+		capabilities->minimumSupportedShaderModel = FFX_SHADER_MODEL_5_1;
+		capabilities->waveLaneCountMin = 32;
+		capabilities->waveLaneCountMax = 64;
+		capabilities->fp16Supported = false;
+		capabilities->raytracingSupported = false;
+		return FFX_OK;
+	}
+
+	FfxErrorCode DestroyBackendContext(FfxFsr2Interface*)
+	{
+		if (backend == nullptr)
+			return FFX_OK;
+		for (BackendResource& r : backend->resources)
+			r.Release();
+		for (ID3D11Buffer*& buffer : backend->constantBuffers)
+			Utilities::SafeRelease(buffer);
+		Utilities::SafeRelease(backend->pointClamp);
+		Utilities::SafeRelease(backend->linearClamp);
+		delete backend;
+		backend = nullptr;
+		return FFX_OK;
+	}
+
+	FfxErrorCode CreateResource(FfxFsr2Interface*, const FfxCreateResourceDescription* create, FfxResourceInternal* out)
+	{
+		if (backend == nullptr || backend->nextStatic >= FirstDynamicResource)
+			return FFX_ERROR_OUT_OF_MEMORY;
+
+		const FfxResourceDescription& d = create->resourceDescription;
+		DXGI_FORMAT format = ToDxgi(d.format);
+		if (format == DXGI_FORMAT_UNKNOWN)
+			return FFX_ERROR_INVALID_ENUM;
+
+		UINT width = d.width ? d.width : 1;
+		UINT height = d.height ? d.height : 1;
+		UINT mips = d.mipCount;
+		if (mips == 0)
+		{
+			UINT largest = width > height ? width : height;
+			while (largest > 0) { ++mips; largest >>= 1; }
+		}
+		if (mips > MaxMips)
+			mips = MaxMips;
+
+		const bool uav = (create->usage & FFX_RESOURCE_USAGE_UAV) != 0;
+
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = width;
+		desc.Height = height;
+		desc.MipLevels = mips;
+		desc.ArraySize = 1;
+		desc.Format = format;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | (uav ? D3D11_BIND_UNORDERED_ACCESS : 0);
+
+		D3D11_SUBRESOURCE_DATA initial = {};
+		initial.pSysMem = create->initData;
+		initial.SysMemPitch = width * BytesPerPixel(format);
+		initial.SysMemSlicePitch = initial.SysMemPitch * height;
+
+		ID3D11Texture2D* texture = nullptr;
+		HRESULT result = backend->device->CreateTexture2D(&desc, (create->initData && mips == 1) ? &initial : nullptr, &texture);
+		if (FAILED(result))
+		{
+			Utilities::Log::Write("FSR 2: CreateTexture2D %ls %ux%u format %u failed 0x%08X", create->name ? create->name : L"?", width, height,
+			                      static_cast<unsigned>(format), static_cast<unsigned>(result));
+			return FFX_ERROR_BACKEND_API_ERROR;
+		}
+
+		int index = backend->nextStatic++;
+		BackendResource& r = backend->resources[index];
+		r.resource = texture;
+		r.description = d;
+		r.description.type = FFX_RESOURCE_TYPE_TEXTURE2D;
+		r.description.width = width;
+		r.description.height = height;
+		r.description.mipCount = mips;
+
+		if (FAILED(backend->device->CreateShaderResourceView(texture, nullptr, &r.srv)))
+			return FFX_ERROR_BACKEND_API_ERROR;
+		if (uav)
+		{
+			for (UINT mip = 0; mip < mips; ++mip)
+			{
+				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+				uavDesc.Format = format;
+				uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+				uavDesc.Texture2D.MipSlice = mip;
+				if (FAILED(backend->device->CreateUnorderedAccessView(texture, &uavDesc, &r.uav[mip])))
+					return FFX_ERROR_BACKEND_API_ERROR;
+			}
+		}
+
+		out->internalIndex = index;
+		return FFX_OK;
+	}
+
+	FfxErrorCode RegisterResource(FfxFsr2Interface*, const FfxResource* in, FfxResourceInternal* out)
+	{
+		out->internalIndex = 0;
+		if (backend == nullptr || in == nullptr || in->resource == nullptr)
+			return FFX_OK;
+		if (backend->nextDynamic >= MaxResources)
+			return FFX_ERROR_OUT_OF_MEMORY;
+
+		ID3D11Resource* resource = static_cast<ID3D11Resource*>(in->resource);
+		D3D11_RESOURCE_DIMENSION dimension = D3D11_RESOURCE_DIMENSION_UNKNOWN;
+		resource->GetType(&dimension);
+		if (dimension != D3D11_RESOURCE_DIMENSION_TEXTURE2D)
+			return FFX_ERROR_INVALID_ARGUMENT;
+
+		D3D11_TEXTURE2D_DESC desc;
+		static_cast<ID3D11Texture2D*>(resource)->GetDesc(&desc);
+		const DXGI_FORMAT viewFormat = TypedFormat(desc.Format);
+
+		int index = backend->nextDynamic++;
+		BackendResource& r = backend->resources[index];
+		resource->AddRef();
+		r.resource = resource;
+		r.external = true;
+		r.description.type = FFX_RESOURCE_TYPE_TEXTURE2D;
+		r.description.width = desc.Width;
+		r.description.height = desc.Height;
+		r.description.depth = 1;
+		r.description.mipCount = desc.MipLevels;
+
+		if (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE)
+		{
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = viewFormat;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = desc.MipLevels;
+			backend->device->CreateShaderResourceView(resource, &srvDesc, &r.srv);
+		}
+		if (desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+		{
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+			uavDesc.Format = viewFormat;
+			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			backend->device->CreateUnorderedAccessView(resource, &uavDesc, &r.uav[0]);
+		}
+
+		out->internalIndex = index;
+		return FFX_OK;
+	}
+
+	FfxErrorCode UnregisterResources(FfxFsr2Interface*)
+	{
+		if (backend == nullptr)
+			return FFX_OK;
+		for (int i = FirstDynamicResource; i < backend->nextDynamic; ++i)
+			backend->resources[i].Release();
+		backend->nextDynamic = FirstDynamicResource;
+		return FFX_OK;
+	}
+
+	FfxResourceDescription GetResourceDescription(FfxFsr2Interface*, FfxResourceInternal handle)
+	{
+		BackendResource* r = Get(handle);
+		return r ? r->description : FfxResourceDescription{};
+	}
+
+	FfxErrorCode DestroyResource(FfxFsr2Interface*, FfxResourceInternal handle)
+	{
+		BackendResource* r = Get(handle);
+		if (r && r->external == false)
+			r->Release();
+		return FFX_OK;
+	}
+
+	FfxErrorCode CreatePipeline(FfxFsr2Interface*, FfxFsr2Pass pass, const FfxPipelineDescription*, FfxPipelineState* out)
+	{
+		memset(out, 0, sizeof(*out));
+
+		const BYTE* code = nullptr;
+		SIZE_T size = 0;
+		switch (pass)
+		{
+		case FFX_FSR2_PASS_DEPTH_CLIP: code = g_Fsr2DepthClip; size = sizeof(g_Fsr2DepthClip); break;
+		case FFX_FSR2_PASS_RECONSTRUCT_PREVIOUS_DEPTH: code = g_Fsr2ReconstructPreviousDepth; size = sizeof(g_Fsr2ReconstructPreviousDepth); break;
+		case FFX_FSR2_PASS_LOCK: code = g_Fsr2Lock; size = sizeof(g_Fsr2Lock); break;
+		case FFX_FSR2_PASS_ACCUMULATE: code = g_Fsr2Accumulate; size = sizeof(g_Fsr2Accumulate); break;
+		case FFX_FSR2_PASS_ACCUMULATE_SHARPEN: code = g_Fsr2AccumulateSharpen; size = sizeof(g_Fsr2AccumulateSharpen); break;
+		case FFX_FSR2_PASS_RCAS: code = g_Fsr2Rcas; size = sizeof(g_Fsr2Rcas); break;
+		case FFX_FSR2_PASS_COMPUTE_LUMINANCE_PYRAMID: code = g_Fsr2LuminancePyramid; size = sizeof(g_Fsr2LuminancePyramid); break;
+		default:
+			/* автогенерация реактивной маски не используется — пустой проход */
+			return FFX_OK;
+		}
+
+		ID3D11ComputeShader* shader = nullptr;
+		HRESULT result = backend->device->CreateComputeShader(code, size, nullptr, &shader);
+		if (FAILED(result))
+		{
+			Utilities::Log::Write("FSR 2: CreateComputeShader (pass %d) failed 0x%08X", static_cast<int>(pass), static_cast<unsigned>(result));
+			return FFX_ERROR_BACKEND_API_ERROR;
+		}
+
+		/* имена и слоты привязок — из отражения шейдера (ffx_fsr2.cpp сопоставит имена с ресурсами) */
+		ID3D11ShaderReflection* reflection = nullptr;
+		if (FAILED(D3DReflect(code, size, IID_ID3D11ShaderReflection, reinterpret_cast<void**>(&reflection))))
+		{
+			shader->Release();
+			return FFX_ERROR_BACKEND_API_ERROR;
+		}
+
+		D3D11_SHADER_DESC shaderDesc = {};
+		reflection->GetDesc(&shaderDesc);
+		for (UINT i = 0; i < shaderDesc.BoundResources; ++i)
+		{
+			D3D11_SHADER_INPUT_BIND_DESC bind = {};
+			if (FAILED(reflection->GetResourceBindingDesc(i, &bind)))
+				continue;
+
+			FfxResourceBinding* target = nullptr;
+			if (bind.Type == D3D_SIT_TEXTURE && out->srvCount < FFX_MAX_NUM_SRVS)
+				target = &out->srvResourceBindings[out->srvCount++];
+			else if ((bind.Type == D3D_SIT_UAV_RWTYPED || bind.Type == D3D_SIT_UAV_RWSTRUCTURED) && out->uavCount < FFX_MAX_NUM_UAVS)
+				target = &out->uavResourceBindings[out->uavCount++];
+			else if (bind.Type == D3D_SIT_CBUFFER && out->constCount < FFX_MAX_NUM_CONST_BUFFERS)
+				target = &out->cbResourceBindings[out->constCount++];
+			if (target == nullptr)
+				continue;
+
+			target->slotIndex = bind.BindPoint;
+			target->resourceIdentifier = 0;
+			MultiByteToWideChar(CP_ACP, 0, bind.Name, -1, target->name, 64);
+		}
+		reflection->Release();
+
+		out->pipeline = shader;
+		return FFX_OK;
+	}
+
+	FfxErrorCode DestroyPipeline(FfxFsr2Interface*, FfxPipelineState* pipeline)
+	{
+		if (pipeline && pipeline->pipeline)
+		{
+			static_cast<ID3D11ComputeShader*>(pipeline->pipeline)->Release();
+			pipeline->pipeline = nullptr;
+		}
+		return FFX_OK;
+	}
+
+	FfxErrorCode ScheduleGpuJob(FfxFsr2Interface*, const FfxGpuJobDescription* job)
+	{
+		if (backend)
+			backend->jobs.push_back(*job);
+		return FFX_OK;
+	}
+
+	void RunCompute(ID3D11DeviceContext* context, const FfxComputeJobDescription& job)
+	{
+		ID3D11ComputeShader* shader = static_cast<ID3D11ComputeShader*>(job.pipeline.pipeline);
+		if (shader == nullptr)
+			return;
+
+		context->CSSetShader(shader, nullptr, 0);
+		ID3D11SamplerState* samplers[2] = { backend->pointClamp, backend->linearClamp };
+		context->CSSetSamplers(0, 2, samplers);
+
+		for (uint32_t i = 0; i < job.pipeline.constCount; ++i)
+		{
+			UINT slot = job.cbSlotIndex[i];
+			if (slot >= 2)
+				continue;
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			if (SUCCEEDED(context->Map(backend->constantBuffers[slot], 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+			{
+				memset(mapped.pData, 0, 256);
+				memcpy(mapped.pData, job.cbs[i].data, job.cbs[i].uint32Size * sizeof(uint32_t));
+				context->Unmap(backend->constantBuffers[slot], 0);
+			}
+			context->CSSetConstantBuffers(slot, 1, &backend->constantBuffers[slot]);
+		}
+
+		for (uint32_t i = 0; i < job.pipeline.srvCount; ++i)
+		{
+			BackendResource* r = Get(job.srvs[i]);
+			ID3D11ShaderResourceView* srv = r ? r->srv : nullptr;
+			context->CSSetShaderResources(job.pipeline.srvResourceBindings[i].slotIndex, 1, &srv);
+		}
+		for (uint32_t i = 0; i < job.pipeline.uavCount; ++i)
+		{
+			BackendResource* r = Get(job.uavs[i]);
+			uint32_t mip = job.uavMip[i] < MaxMips ? job.uavMip[i] : 0;
+			ID3D11UnorderedAccessView* uav = r ? r->uav[mip] : nullptr;
+			context->CSSetUnorderedAccessViews(job.pipeline.uavResourceBindings[i].slotIndex, 1, &uav, nullptr);
+		}
+
+		context->Dispatch(job.dimensions[0], job.dimensions[1], job.dimensions[2]);
+
+		/* отвязать, чтобы следующий проход мог читать то, что этот записал */
+		Utilities::ComputeState::Unbind(context);
+	}
+
+	FfxErrorCode ExecuteGpuJobs(FfxFsr2Interface*, FfxCommandList commandList)
+	{
+		if (backend == nullptr)
+			return FFX_ERROR_NULL_DEVICE;
+		ID3D11DeviceContext* context = static_cast<ID3D11DeviceContext*>(commandList);
+
+		backend->savedState.Save(context);
+		Utilities::ComputeState::Unbind(context);
+
+		for (const FfxGpuJobDescription& job : backend->jobs)
+		{
+			switch (job.jobType)
+			{
+			case FFX_GPU_JOB_CLEAR_FLOAT:
+			{
+				BackendResource* r = Get(job.clearJobDescriptor.target);
+				if (r && r->uav[0])
+					context->ClearUnorderedAccessViewFloat(r->uav[0], job.clearJobDescriptor.color);
+				break;
+			}
+			case FFX_GPU_JOB_COPY:
+			{
+				BackendResource* source = Get(job.copyJobDescriptor.src);
+				BackendResource* destination = Get(job.copyJobDescriptor.dst);
+				if (source && destination)
+					context->CopyResource(destination->resource, source->resource);
+				break;
+			}
+			case FFX_GPU_JOB_COMPUTE:
+				RunCompute(context, job.computeJobDescriptor);
+				break;
+			}
+		}
+		backend->jobs.clear();
+
+		backend->savedState.Restore(context);
+		return FFX_OK;
+	}
+}
+
+
+
+
+/* ================================================================== FSR2 */
+
+bool FSR2::CheckDevice(ID3D11Device* device)
+{
+	if (device->GetFeatureLevel() < D3D_FEATURE_LEVEL_11_0)
+	{
+		errorReason = "FSR 2: NEEDS DIRECTX 11.0 GPU";
+		return false;
+	}
+
+	/* проходы FSR 2 читают из UAV форматов R16F, RG32F и R8 — это есть почти везде с Windows 10 */
+	const DXGI_FORMAT formats[] = { DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R8_UNORM };
+	for (DXGI_FORMAT format : formats)
+	{
+		D3D11_FEATURE_DATA_FORMAT_SUPPORT2 support = {};
+		support.InFormat = format;
+		if (FAILED(device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &support, sizeof(support))) ||
+		    (support.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_UAV_TYPED_LOAD) == 0)
+		{
+			Utilities::Log::Write("FSR 2: typed UAV loads are not supported for format %u - GPU or driver too old", static_cast<unsigned>(format));
+			errorReason = "FSR 2: GPU NOT SUPPORTED (TYPED UAV LOADS)";
+			return false;
+		}
+	}
+	return true;
+}
+
+void FSR2::DestroyContext()
+{
+	if (fsrContext)
+	{
+		ffxFsr2ContextDestroy(static_cast<FfxFsr2Context*>(fsrContext));
+		delete static_cast<FfxFsr2Context*>(fsrContext);
+		fsrContext = nullptr;
+	}
+	contextMaxWidth = contextMaxHeight = contextOutputWidth = contextOutputHeight = 0;
+}
+
+bool FSR2::EnsureContext(ID3D11Device* device, const Inputs& in)
+{
+	if (fsrContext && contextMaxWidth == in.maxRenderWidth && contextMaxHeight == in.maxRenderHeight &&
+	    contextOutputWidth == in.outputWidth && contextOutputHeight == in.outputHeight && contextDynamic == in.dynamicResolution)
+		return true;
+
+	const int key[5] = { in.maxRenderWidth, in.maxRenderHeight, in.outputWidth, in.outputHeight, in.dynamicResolution ? 1 : 0 };
+	if (memcmp(key, failedKey, sizeof(key)) == 0)
+		return false;
+
+	DestroyContext();
+
+	FfxFsr2ContextDescription description = {};
+	description.flags = FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INVERTED | FFX_FSR2_ENABLE_DEPTH_INFINITE |
+	                    FFX_FSR2_ENABLE_AUTO_EXPOSURE | (in.dynamicResolution ? FFX_FSR2_ENABLE_DYNAMIC_RESOLUTION : 0);
+	description.maxRenderSize.width = static_cast<uint32_t>(in.maxRenderWidth);
+	description.maxRenderSize.height = static_cast<uint32_t>(in.maxRenderHeight);
+	description.displaySize.width = static_cast<uint32_t>(in.outputWidth);
+	description.displaySize.height = static_cast<uint32_t>(in.outputHeight);
+	description.device = device;
+	description.fpMessage = &LogMessage;
+
+	FfxFsr2Interface& callbacks = description.callbacks;
+	callbacks.fpCreateBackendContext = &CreateBackendContext;
+	callbacks.fpGetDeviceCapabilities = &GetDeviceCapabilities;
+	callbacks.fpDestroyBackendContext = &DestroyBackendContext;
+	callbacks.fpCreateResource = &CreateResource;
+	callbacks.fpRegisterResource = &RegisterResource;
+	callbacks.fpUnregisterResources = &UnregisterResources;
+	callbacks.fpGetResourceDescription = &GetResourceDescription;
+	callbacks.fpDestroyResource = &DestroyResource;
+	callbacks.fpCreatePipeline = &CreatePipeline;
+	callbacks.fpDestroyPipeline = &DestroyPipeline;
+	callbacks.fpScheduleGpuJob = &ScheduleGpuJob;
+	callbacks.fpExecuteGpuJobs = &ExecuteGpuJobs;
+
+	FfxFsr2Context* created = new FfxFsr2Context();
+	FfxErrorCode result = ffxFsr2ContextCreate(created, &description);
+	if (result != FFX_OK)
+	{
+		Utilities::Log::Write("FSR 2: context %dx%d -> %dx%d failed: 0x%08X", in.maxRenderWidth, in.maxRenderHeight, in.outputWidth,
+		                      in.outputHeight, static_cast<unsigned>(result));
+		ffxFsr2ContextDestroy(created);
+		delete created;
+		memcpy(failedKey, key, sizeof(key));
+		errorReason = "FSR 2 CONTEXT FAILED";
+		return false;
+	}
+
+	fsrContext = created;
+	contextMaxWidth = in.maxRenderWidth;
+	contextMaxHeight = in.maxRenderHeight;
+	contextOutputWidth = in.outputWidth;
+	contextOutputHeight = in.outputHeight;
+	contextDynamic = in.dynamicResolution;
+	Utilities::Log::Write("FSR 2.2.1 created: max input %dx%d -> %dx%d%s", in.maxRenderWidth, in.maxRenderHeight, in.outputWidth,
+	                      in.outputHeight, in.dynamicResolution ? " (dynamic resolution)" : "");
+	return true;
+}
+
+bool FSR2::Execute(ID3D11DeviceContext* context, const Inputs& in)
+{
+	if (unsupported)
+		return false;
+	if (in.color == nullptr || in.motionVectors == nullptr || in.depth == nullptr || in.output == nullptr ||
+	    in.renderWidth <= 0 || in.renderHeight <= 0 || in.renderWidth > in.maxRenderWidth || in.renderHeight > in.maxRenderHeight)
+	{
+		errorReason = "FSR 2: NO INPUTS";
+		return false;
+	}
+
+	ID3D11Device* device = nullptr;
+	context->GetDevice(&device);
+	if (device == nullptr)
+		return false;
+
+	static bool checked = false;
+	if (checked == false)
+	{
+		checked = true;
+		if (CheckDevice(device) == false)
+		{
+			unsupported = true;
+			device->Release();
+			return false;
+		}
+	}
+
+	bool ok = EnsureContext(device, in);
+	device->Release();
+	if (ok == false)
+		return false;
+
+	FfxFsr2DispatchDescription dispatch = {};
+	dispatch.commandList = context;
+	dispatch.color.resource = in.color;
+	dispatch.depth.resource = in.depth;
+	dispatch.motionVectors.resource = in.motionVectors;
+	dispatch.output.resource = in.output;
+	dispatch.jitterOffset.x = in.jitterX;
+	dispatch.jitterOffset.y = in.jitterY;
+	/* наши векторы — в пикселях входа; FSR 2 делит масштаб на размер входа и получает смещение в UV */
+	dispatch.motionVectorScale.x = 1.0f;
+	dispatch.motionVectorScale.y = 1.0f;
+	dispatch.renderSize.width = static_cast<uint32_t>(in.renderWidth);
+	dispatch.renderSize.height = static_cast<uint32_t>(in.renderHeight);
+	dispatch.enableSharpening = in.sharpness > 0.001f;
+	dispatch.sharpness = in.sharpness;
+	dispatch.frameTimeDelta = in.frameTimeMs;
+	dispatch.preExposure = 1.0f;
+	dispatch.reset = in.reset;
+	/* обратная бесконечная глубина UE: по соглашению FSR 2 near = FLT_MAX, far = ближняя плоскость */
+	dispatch.cameraNear = FLT_MAX;
+	dispatch.cameraFar = in.cameraNear;
+	dispatch.cameraFovAngleVertical = in.fovY;
+	dispatch.viewSpaceToMetersFactor = 0.01f;   // сантиметры UE -> метры
+
+	FfxErrorCode result = ffxFsr2ContextDispatch(static_cast<FfxFsr2Context*>(fsrContext), &dispatch);
+	if (result != FFX_OK)
+	{
+		static int errors = 0;
+		if (errors++ < 10)
+			Utilities::Log::Write("FSR 2: dispatch failed: 0x%08X", static_cast<unsigned>(result));
+		errorReason = "FSR 2 DISPATCH FAILED";
+		return false;
+	}
+	errorReason = "";
+	return true;
+}
