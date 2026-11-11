@@ -31,7 +31,7 @@ r.LowLatency.Markers       ; 1 = on (default), 0 = off
 **DLSS Performance:** `r.TemporalAA.Upsampling 1` → `r.ScreenPercentage 50` (100 = DLAA) → `r.Upscaler.Method 2`
 
 ## Build
-Visual Studio 2022, **Release | x64**. Rename the output `DBDTechnologies.dll` to `.asi`.
+Visual Studio 2022, **Release | x64**. C++ 20, C Legacy.
 
 ---
-**Authors:** [Cranch](https://github.com/Cranch-fur), [Claude](https://claude.com/) · **License:** [GPL v3](LICENSE.txt)
+**License:** [GPL v3](LICENSE.txt)
