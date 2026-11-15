@@ -18,6 +18,21 @@
     <Filter Include="Shaders">
       <UniqueIdentifier>{B6A1C0D2-3E4F-4A5B-8C6D-7E8F90A1B2C3}</UniqueIdentifier>
     </Filter>
+    <FxCompile Include="Shaders\VoxelUpdate.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelCarve.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelInject.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelTrace.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelReflectionsDebug.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
     <FxCompile Include="Shaders\FsrEasu.hlsl">
       <Filter>Shaders</Filter>
     </FxCompile>
@@ -119,6 +134,12 @@
     <ClCompile Include="Utilities.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="FrameCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="VoxelReflections.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\SDKs\FSR2\ffx_fsr2.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -187,5 +208,14 @@
     <ClInclude Include="Utilities.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="FrameCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="VoxelReflections.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <None Include="Shaders\VoxelCommon.hlsli">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

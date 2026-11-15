@@ -12,7 +12,10 @@
 	  FDefaultTemporalUpscaler::AddPasses            render thread: frame size, camera matrices, jitter
 	  FD3D11DynamicRHI::RHIDispatchComputeShader     RHI thread: the TAA dispatch is replaced by DLSS, XeSS, FSR 2 or FSR 3
 	  FD3D11DynamicRHI::RHIDrawPrimitive (+Indexed)  RHI thread: the spatial upscale draw is replaced by FSR 1
-	  FD3D11DynamicRHI::RHIEndDrawingViewport        RHI thread: overlay, Reflex present markers
+	  FD3D11DynamicRHI::RHIEndDrawingViewport        RHI thread: overlay, Reflex present markers, frame capture boundaries
+
+	Draws and dispatches are also passed to FrameCapture (r.VoxelReflections.Capture) after the engine issued them.
+	DrawIndexed is first offered to VoxelReflections, which replaces the engine SSR draw (r.VoxelReflections.*).
 */
 class Technologies
 {
@@ -110,6 +113,7 @@ private:
 	static void __fastcall HookAddPasses(const void* self, void* graphBuilder, const void* view, const void* passInputs,
 	                                     void** outTexture, IntRect* outRect, void** outHalfTexture, IntRect* outHalfRect);
 	static void __fastcall HookDispatch(void* context, UINT x, UINT y, UINT z);
+	static void RunDispatch(void* context, UINT x, UINT y, UINT z);
 	static void __fastcall HookDraw(void* context, UINT baseVertex, UINT numPrimitives, UINT numInstances);
 	static void __fastcall HookDrawIndexed(void* context, void* indexBuffer, INT baseVertex, UINT firstInstance, UINT numVertices,
 	                                       UINT startIndex, UINT numPrimitives, UINT numInstances);

@@ -8,6 +8,8 @@
 #include "FSR1.h"
 #include "FSR2.h"
 #include "FSR3.h"
+#include "FrameCapture.h"
+#include "VoxelReflections.h"
 
 #include <algorithm>
 
@@ -478,6 +480,13 @@ void Technologies::ReportTsr(const FrameData& f)
 
 void __fastcall Technologies::HookDispatch(void* context, UINT x, UINT y, UINT z)
 {
+	RunDispatch(context, x, y, z);
+	if (FrameCapture::IsActive())
+		FrameCapture::OnDispatch(Utilities::Memory::Read<ID3D11DeviceContext*>(context, OFF_CONTEXT_D3D11), x, y, z);
+}
+
+void Technologies::RunDispatch(void* context, UINT x, UINT y, UINT z)
+{
 	FrameData f;
 	EnterCriticalSection(&frameLock);
 	f = frame;
@@ -637,17 +646,25 @@ bool Technologies::TryFsr1(void* context)
 
 void __fastcall Technologies::HookDraw(void* context, UINT baseVertex, UINT numPrimitives, UINT numInstances)
 {
-	if (spatialUpscale.armed && TryFsr1(context))
-		return;
-	originalDraw(context, baseVertex, numPrimitives, numInstances);
+	const bool replaced = spatialUpscale.armed && TryFsr1(context);
+	if (replaced == false)
+		originalDraw(context, baseVertex, numPrimitives, numInstances);
+	if (FrameCapture::IsActive())
+		FrameCapture::OnDraw(Utilities::Memory::Read<ID3D11DeviceContext*>(context, OFF_CONTEXT_D3D11), "Draw", numPrimitives, numInstances, replaced);
 }
 
 void __fastcall Technologies::HookDrawIndexed(void* context, void* indexBuffer, INT baseVertex, UINT firstInstance, UINT numVertices,
                                               UINT startIndex, UINT numPrimitives, UINT numInstances)
 {
-	if (spatialUpscale.armed && TryFsr1(context))
-		return;
-	originalDrawIndexed(context, indexBuffer, baseVertex, firstInstance, numVertices, startIndex, numPrimitives, numInstances);
+	bool replaced = spatialUpscale.armed && TryFsr1(context);
+	if (replaced == false && VoxelReflections::IsEnabled())
+		replaced = VoxelReflections::OnDrawIndexed(Utilities::Memory::Read<ID3D11DeviceContext*>(context, OFF_CONTEXT_D3D11), numPrimitives,
+		                                           numInstances);
+	if (replaced == false)
+		originalDrawIndexed(context, indexBuffer, baseVertex, firstInstance, numVertices, startIndex, numPrimitives, numInstances);
+	if (FrameCapture::IsActive())
+		FrameCapture::OnDraw(Utilities::Memory::Read<ID3D11DeviceContext*>(context, OFF_CONTEXT_D3D11), "DrawIndexed", numPrimitives, numInstances,
+		                     replaced);
 }
 
 
@@ -714,7 +731,11 @@ void __fastcall Technologies::HookEndDrawing(void* context, void* viewport, bool
 	}
 
 	if (present)
+	{
+		FrameCapture::OnPresent(d3dContext, backBufferWidth, backBufferHeight, frameNumber);
+		VoxelReflections::OnPresent();
 		LowLatency::PresentStart();
+	}
 	originalEndDrawing(context, viewport, present, lockToVsync);
 	if (present)
 		LowLatency::PresentEnd();
@@ -765,9 +786,12 @@ bool Technologies::InstallHooks()
 	if (drawMatches &&
 	    Memory::PatchPointer(base + RVA_DRAW_SLOT, reinterpret_cast<void*>(&HookDraw), reinterpret_cast<void**>(&originalDraw)) &&
 	    Memory::PatchPointer(base + RVA_DRAW_INDEXED_SLOT, reinterpret_cast<void*>(&HookDrawIndexed), reinterpret_cast<void**>(&originalDrawIndexed)))
-		Utilities::Log::Write("draw hooks installed (FSR 1)");
+	{
+		FrameCapture::drawHooks = true;
+		Utilities::Log::Write("draw hooks installed (FSR 1, frame capture)");
+	}
 	else
-		Utilities::Log::Write("draw hooks not installed - FSR 1 unavailable");
+		Utilities::Log::Write("draw hooks not installed - FSR 1 unavailable, frame capture logs dispatches only");
 
 	return true;
 }
@@ -787,5 +811,5 @@ void Technologies::Init()
 	Overlay::SetExtraTextProvider(&LowLatency::StatusText);
 	LowLatency::gameThreadCallback = &GameThreadUpdate;
 	LowLatency::InstallHooks(base);
-	Utilities::Log::Write("hooks installed. Console: r.Upscaler.*, r.DLSS.*, r.LowLatency.* (defaults: everything off)");
+	Utilities::Log::Write("hooks installed. Console: r.Upscaler.*, r.DLSS.*, r.LowLatency.*, r.VoxelReflections.* (defaults: everything off)");
 }

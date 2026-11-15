@@ -1,6 +1,8 @@
 #include "Console.h"
 #include "DLSS.h"
 #include "LowLatency.h"
+#include "FrameCapture.h"
+#include "VoxelReflections.h"
 
 
 
@@ -72,6 +74,27 @@ void Console::Register(uintptr_t executableBase)
 		  L"AMD Anti-Lag 2 on Radeon RX 5000+, not available on Intel (DX11). Unknown value -> 0." },
 		{ L"r.LowLatency.Markers", &LowLatency::markers, nullptr,
 		  L"NVIDIA Reflex latency markers: 1 = on (default, better pacing + latency stats in NVIDIA overlays), 0 = Sleep only." },
+		{ L"r.VoxelReflections.Capture", &FrameCapture::request, nullptr,
+		  L"Diagnostics: log the GPU state of the next frame to DBDTechnologies_Capture_<n>.log next to the game exe. "
+		  L"1 = full-screen draws + dispatches, 2 = every draw and dispatch (large). Goes back to 0 by itself." },
+		{ L"r.VoxelReflections.Enable", &VoxelReflections::enable, nullptr,
+		  L"Voxel reflections (experimental): 1 = replace the engine SSR with reflections traced through a voxel cache "
+		  L"built from the screen, 0 = off (default). Needs r.SSR.Quality 1..4 (the engine pass is taken over)." },
+		{ L"r.VoxelReflections.Debug", &VoxelReflections::debug, nullptr,
+		  L"Debug view in the reflections: 0 = off (default), 1 = magenta, 2 = GBuffer normals, 3 = depth bands every 5 m, "
+		  L"4 = roughness, 5 = world grid (1 m, must stay glued to surfaces), 6 = voxel cache seen from the camera." },
+		{ L"r.VoxelReflections.DebugScale", nullptr, &VoxelReflections::debugScale,
+		  L"Brightness of r.VoxelReflections.Debug (the engine multiplies reflections by surface reflectance), default 16." },
+		{ L"r.VoxelReflections.VoxelSize", nullptr, &VoxelReflections::voxelSize,
+		  L"Finest voxel size in cm, 2..100, default 8. Four levels double it each; each level is 128 voxels wide "
+		  L"(default: 8 cm voxels up to 5 m, 64 cm up to 41 m from the camera)." },
+		{ L"r.VoxelReflections.MaxRoughness", nullptr, &VoxelReflections::maxRoughness,
+		  L"Rougher surfaces keep the engine reflection captures only, default 0.6." },
+		{ L"r.VoxelReflections.MaxDistance", nullptr, &VoxelReflections::maxDistance,
+		  L"Longest reflection ray in cm, default 3000." },
+		{ L"r.VoxelReflections.ViewBufferSlot", &VoxelReflections::viewBufferSlot, nullptr,
+		  L"Constant buffer slot of the engine View uniform buffer in the SSR pass, default 1. "
+		  L"Only change it if r.VoxelReflections.Debug 5 shows no grid or a grid that slides with the camera." },
 	};
 
 	int registered = 0;
@@ -87,7 +110,7 @@ void Console::Register(uintptr_t executableBase)
 		else
 			Utilities::Log::Write("console: %ls - unexpected result (%p, vtable %p)", variable.name, cvar, reinterpret_cast<void*>(cvarVtable));
 	}
-	Utilities::Log::Write("console: %d of %d variables registered (r.Upscaler.*, r.DLSS.*, r.LowLatency.*)", registered,
+	Utilities::Log::Write("console: %d of %d variables registered (r.Upscaler.*, r.DLSS.*, r.LowLatency.*, r.VoxelReflections.*)", registered,
 	                      static_cast<int>(_countof(variables)));
 	InterlockedExchange(&ready, 1);
 }

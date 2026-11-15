@@ -156,6 +156,8 @@
     <ClCompile Include="LowLatency.cpp" />
     <ClCompile Include="Overlay.cpp" />
     <ClCompile Include="Utilities.cpp" />
+    <ClCompile Include="FrameCapture.cpp" />
+    <ClCompile Include="VoxelReflections.cpp" />
     <ClCompile Include="..\SDKs\FSR2\ffx_fsr2.cpp">
       <WarningLevel>Level1</WarningLevel>
       <SDLCheck>false</SDLCheck>
@@ -201,8 +203,53 @@
     <ClInclude Include="LowLatency.h" />
     <ClInclude Include="Overlay.h" />
     <ClInclude Include="Utilities.h" />
+    <ClInclude Include="FrameCapture.h" />
+    <ClInclude Include="VoxelReflections.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="Shaders\VoxelCommon.hlsli" />
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Shaders\VoxelUpdate.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <VariableName>g_VoxelUpdate</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelCarve.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <VariableName>g_VoxelCarve</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelInject.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <VariableName>g_VoxelInject</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelTrace.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <VariableName>g_VoxelTrace</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+    </FxCompile>
+    <FxCompile Include="Shaders\VoxelReflectionsDebug.hlsl">
+      <ShaderType>Compute</ShaderType>
+      <ShaderModel>5.0</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <VariableName>g_VoxelReflectionsDebug</VariableName>
+      <HeaderFileOutput>$(IntDir)Shaders\%(Filename).h</HeaderFileOutput>
+      <ObjectFileOutput />
+    </FxCompile>
     <FxCompile Include="Shaders\FsrEasu.hlsl">
       <ShaderType>Compute</ShaderType>
       <ShaderModel>5.0</ShaderModel>
